@@ -14,7 +14,7 @@ class SegmentManager(private val context: Context) {
 
     companion object {
         private const val TAG = "SegmentManager"
-        private const val SEGMENT_DURATION_MS = 500L
+        private const val SEGMENT_DURATION_MS = 2000L
         private const val SEGMENT_PREFIX = "segment_"
         private const val SEGMENT_EXTENSION = ".mp4"
     }

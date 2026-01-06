@@ -15,47 +15,91 @@ const CameraViewNative = UIManager.getViewManagerConfig(COMPONENT_NAME)
  * @param {boolean} props.autoStart - Whether to auto-start preview when mounted
  * @param {number} props.clipDuration - Total clip duration in seconds (default: 10)
  * @param {Object} props.style - Style for the camera view container
+ * @param {Function} props.onCameraReady - Callback when camera is ready
  */
-const CameraPreview = React.forwardRef(({ autoStart = false, clipDuration = 10, style, ...props }, ref) => {
+const CameraPreview = React.forwardRef(({ 
+    autoStart = false, 
+    clipDuration = 10, 
+    style, 
+    onCameraReady,
+    ...props 
+}, ref) => {
     const nativeRef = React.useRef(null);
+    const [isMounted, setIsMounted] = React.useState(false);
+
+    React.useEffect(() => {
+        setIsMounted(true);
+        
+        // Give native view time to mount, then start preview if autoStart
+        if (autoStart) {
+            const timer = setTimeout(() => {
+                if (nativeRef.current) {
+                    startPreview();
+                }
+            }, 500);
+            
+            return () => clearTimeout(timer);
+        }
+    }, [autoStart]);
+
+    const executeCommand = (commandName, args = []) => {
+        if (!nativeRef.current) {
+            console.warn(`Cannot execute ${commandName}: ref not available`);
+            return;
+        }
+
+        try {
+            const viewId = findNodeHandle(nativeRef.current);
+            if (!viewId) {
+                console.warn(`Cannot execute ${commandName}: viewId not found`);
+                return;
+            }
+
+            const commands = UIManager.getViewManagerConfig(COMPONENT_NAME)?.Commands;
+            if (!commands || !commands[commandName]) {
+                console.warn(`Command ${commandName} not found in native module`);
+                return;
+            }
+
+            UIManager.dispatchViewManagerCommand(
+                viewId,
+                commands[commandName],
+                args
+            );
+        } catch (error) {
+            console.error(`Error executing ${commandName}:`, error);
+        }
+    };
+
+    const startPreview = () => {
+        console.log('CameraPreview: Starting preview');
+        executeCommand('startPreview');
+        if (onCameraReady) {
+            // Notify parent that camera preview has started
+            setTimeout(() => onCameraReady(), 100);
+        }
+    };
+
+    const startBuffering = () => {
+        console.log('CameraPreview: Starting buffering');
+        executeCommand('startBuffering');
+    };
+
+    const triggerCapture = () => {
+        console.log('CameraPreview: Triggering capture');
+        executeCommand('triggerCapture');
+    };
+
+    const stop = () => {
+        console.log('CameraPreview: Stopping');
+        executeCommand('stop');
+    };
 
     React.useImperativeHandle(ref, () => ({
-        startPreview: () => {
-            if (nativeRef.current) {
-                UIManager.dispatchViewManagerCommand(
-                    findNodeHandle(nativeRef.current),
-                    UIManager.getViewManagerConfig(COMPONENT_NAME).Commands.startPreview,
-                    []
-                );
-            }
-        },
-        startBuffering: () => {
-            if (nativeRef.current) {
-                UIManager.dispatchViewManagerCommand(
-                    findNodeHandle(nativeRef.current),
-                    UIManager.getViewManagerConfig(COMPONENT_NAME).Commands.startBuffering,
-                    []
-                );
-            }
-        },
-        triggerCapture: () => {
-            if (nativeRef.current) {
-                UIManager.dispatchViewManagerCommand(
-                    findNodeHandle(nativeRef.current),
-                    UIManager.getViewManagerConfig(COMPONENT_NAME).Commands.triggerCapture,
-                    []
-                );
-            }
-        },
-        stop: () => {
-            if (nativeRef.current) {
-                UIManager.dispatchViewManagerCommand(
-                    findNodeHandle(nativeRef.current),
-                    UIManager.getViewManagerConfig(COMPONENT_NAME).Commands.stop,
-                    []
-                );
-            }
-        },
+        startPreview,
+        startBuffering,
+        triggerCapture,
+        stop,
     }));
 
     if (!CameraViewNative) {

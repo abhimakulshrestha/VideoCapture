@@ -15,7 +15,6 @@ import CameraModule from '../services/CameraModule';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-// New vibrant teal color palette
 const COLORS = {
     primary: '#00D9FF',
     primaryLight: '#5CE1FF',
@@ -35,17 +34,13 @@ const COLORS = {
 };
 
 /**
- * CameraScreen - Simplified one-button capture flow
- * 
- * Flow:
- * 1. Camera silently buffers in background (pre-capture)
- * 2. User presses CAPTURE button
- * 3. Records for selected duration (post-capture) with countdown
- * 4. Automatically saves and returns to ready state
+ * CameraScreen - Simplified one-button capture flow with smart pre-buffer handling
  */
 const CameraScreen = ({ username, clipDuration, onSettings, onLogout, onDurationChange }) => {
     const cameraRef = useRef(null);
     const cameraPreviewRef = useRef(null);
+    const screenOpenTime = useRef(null);
+    const captureInProgress = useRef(false);
 
     // State
     const [showDurationDropdown, setShowDurationDropdown] = useState(false);
@@ -57,6 +52,7 @@ const CameraScreen = ({ username, clipDuration, onSettings, onLogout, onDuration
     const [telemetry, setTelemetry] = useState(null);
     const [showTelemetry, setShowTelemetry] = useState(false);
     const [isCameraInitialized, setIsCameraInitialized] = useState(false);
+    const [errorMessage, setErrorMessage] = useState('');
 
     // Animations
     const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -87,6 +83,14 @@ const CameraScreen = ({ username, clipDuration, onSettings, onLogout, onDuration
             pulseAnim.setValue(1);
         }
     }, [isReady, isCapturing]);
+
+    // Track when screen is opened for smart pre-buffer handling
+    useEffect(() => {
+        if (isReady && !screenOpenTime.current) {
+            screenOpenTime.current = Date.now();
+            console.log('Screen ready - tracking open time');
+        }
+    }, [isReady]);
 
     const startPulseAnimation = () => {
         Animated.loop(
@@ -169,43 +173,59 @@ const CameraScreen = ({ username, clipDuration, onSettings, onLogout, onDuration
 
     const initializeCamera = async () => {
         try {
+            console.log('Initializing camera...');
             const perms = await CameraModule.checkPermissions();
 
             if (!perms.allGranted) {
-                await CameraModule.requestPermissions();
-                const newPerms = await CameraModule.checkPermissions();
-                if (!newPerms.allGranted) {
+                console.log('Requesting permissions...');
+                const granted = await CameraModule.requestPermissions();
+                if (!granted) {
                     Alert.alert('Permission Required', 'Camera and microphone permissions are required.');
+                    setErrorMessage('Permissions denied');
                     return;
                 }
             }
 
             setHasPermission(true);
+            console.log('Permissions granted, initializing camera module...');
+            
             await CameraModule.initializeCamera();
             setIsCameraInitialized(true);
 
-            // Allow view to mount, then start preview and buffering
+            // Set clip duration first
+            await CameraModule.setClipDuration(clipDuration);
+            console.log(`Clip duration set to ${clipDuration}s`);
+
+            // Wait for view to mount properly
             setTimeout(async () => {
                 try {
                     if (cameraPreviewRef.current) {
-                        console.log('Starting preview explicitly');
+                        console.log('Starting camera preview...');
                         cameraPreviewRef.current.startPreview();
+                        
+                        // Wait for preview to start, then begin buffering
+                        setTimeout(async () => {
+                            try {
+                                console.log('Starting buffering...');
+                                await CameraModule.startBuffering();
+                                setIsReady(true);
+                                setErrorMessage('');
+                                console.log('Camera ready!');
+                            } catch (e) {
+                                console.error('Buffering error:', e);
+                                setErrorMessage('Failed to start buffering');
+                            }
+                        }, 1000);
                     }
-
-                    await CameraModule.setClipDuration(clipDuration);
-
-                    // Wait for CameraX binding to complete before buffering
-                    setTimeout(async () => {
-                        await CameraModule.startBuffering();
-                        setIsReady(true);
-                    }, 800);
                 } catch (e) {
-                    console.error('Startup sequence error:', e);
+                    console.error('Preview startup error:', e);
+                    setErrorMessage('Failed to start preview');
                 }
-            }, 100);
+            }, 500);
 
         } catch (error) {
             console.error('Camera initialization error:', error);
+            setErrorMessage(error.message || 'Camera initialization failed');
             Alert.alert('Error', 'Failed to initialize camera: ' + error.message);
         }
     };
@@ -214,28 +234,40 @@ const CameraScreen = ({ username, clipDuration, onSettings, onLogout, onDuration
         const subscriptions = [];
 
         subscriptions.push(CameraModule.onBufferReady(() => {
-            console.log('Buffer ready');
+            console.log('Buffer ready event received');
             setIsReady(true);
+            setErrorMessage('');
         }));
 
         subscriptions.push(CameraModule.onCaptureStarted(() => {
-            console.log('Capture started');
+            console.log('Capture started event received');
             animateCapture();
         }));
 
         subscriptions.push(CameraModule.onCaptureCompleted(({ filePath }) => {
             console.log('Capture completed:', filePath);
+            
+            if (countdownInterval.current) {
+                clearInterval(countdownInterval.current);
+                countdownInterval.current = null;
+            }
+            
             setIsCapturing(false);
             setCountdown(0);
+            captureInProgress.current = false;
             showSuccessMessage();
+            progressAnim.setValue(0);
 
-            // Restart buffering for next capture
+            // Reset screen open time and restart buffering
+            screenOpenTime.current = null;
             setTimeout(async () => {
                 try {
                     await CameraModule.startBuffering();
                     setIsReady(true);
+                    screenOpenTime.current = Date.now();
                 } catch (e) {
                     console.error('Error restarting buffer:', e);
+                    setErrorMessage('Failed to restart buffering');
                 }
             }, 1000);
         }));
@@ -243,7 +275,14 @@ const CameraScreen = ({ username, clipDuration, onSettings, onLogout, onDuration
         subscriptions.push(CameraModule.onError(({ code, message }) => {
             console.error('Camera error:', code, message);
             setIsCapturing(false);
+            captureInProgress.current = false;
+            setErrorMessage(message);
             Alert.alert('Camera Error', message);
+            
+            if (countdownInterval.current) {
+                clearInterval(countdownInterval.current);
+                countdownInterval.current = null;
+            }
         }));
 
         subscriptions.push(CameraModule.onTelemetryUpdate((data) => {
@@ -256,6 +295,7 @@ const CameraScreen = ({ username, clipDuration, onSettings, onLogout, onDuration
 
             if (state === 'idle') {
                 setIsCapturing(false);
+                captureInProgress.current = false;
             }
         }));
 
@@ -263,10 +303,18 @@ const CameraScreen = ({ username, clipDuration, onSettings, onLogout, onDuration
     };
 
     const cleanup = async () => {
+        console.log('Cleaning up camera...');
         if (cameraRef.current) {
             cameraRef.current.forEach(sub => sub.remove());
         }
-        await CameraModule.stopCamera();
+        if (countdownInterval.current) {
+            clearInterval(countdownInterval.current);
+        }
+        try {
+            await CameraModule.stopCamera();
+        } catch (e) {
+            console.error('Cleanup error:', e);
+        }
     };
 
     const durationOptions = [6, 10, 20, 30];
@@ -276,23 +324,41 @@ const CameraScreen = ({ username, clipDuration, onSettings, onLogout, onDuration
             await CameraModule.setClipDuration(duration);
             if (onDurationChange) onDurationChange(duration);
             setShowDurationDropdown(false);
+            
+            // Reset screen open time with new duration
+            if (isReady) {
+                screenOpenTime.current = Date.now();
+            }
         } catch (error) {
             Alert.alert('Error', 'Failed to update duration: ' + error.message);
         }
     };
 
     const handleCapture = async () => {
-        if (!isReady || isCapturing) return;
+        if (!isReady || isCapturing || captureInProgress.current) {
+            console.log('Capture blocked:', { isReady, isCapturing, inProgress: captureInProgress.current });
+            return;
+        }
 
         try {
+            captureInProgress.current = true;
             setIsCapturing(true);
             setIsReady(false);
 
-            // Trigger capture - this freezes the pre-buffer and starts post-recording
+            // Calculate actual pre-buffer time based on how long screen was open
+            const preDuration = clipDuration / 2;
+            const postDuration = clipDuration / 2;
+            const screenOpenDuration = screenOpenTime.current 
+                ? (Date.now() - screenOpenTime.current) / 1000 
+                : 0;
+            
+            console.log(`Screen was open for ${screenOpenDuration.toFixed(1)}s, pre-buffer target: ${preDuration}s`);
+            
+            // The native module will handle whatever buffer is available
+            // If screen was open < preDuration, it uses what's available
             await CameraModule.triggerCapture();
 
             // Start countdown for post-capture duration
-            const postDuration = clipDuration / 2;
             setCountdown(postDuration);
 
             // Animate progress
@@ -307,7 +373,10 @@ const CameraScreen = ({ username, clipDuration, onSettings, onLogout, onDuration
             countdownInterval.current = setInterval(() => {
                 setCountdown(prev => {
                     if (prev <= 1) {
-                        clearInterval(countdownInterval.current);
+                        if (countdownInterval.current) {
+                            clearInterval(countdownInterval.current);
+                            countdownInterval.current = null;
+                        }
                         return 0;
                     }
                     animateCountdown();
@@ -315,38 +384,45 @@ const CameraScreen = ({ username, clipDuration, onSettings, onLogout, onDuration
                 });
             }, 1000);
 
-            // Safety timeout - reset if capture doesn't complete within expected time + buffer
+            // Safety timeout
             const safetyTimeout = (postDuration + 5) * 1000;
-            setTimeout(async () => {
-                // If still capturing after timeout, force reset
-                setIsCapturing(currentCapturing => {
-                    if (currentCapturing) {
-                        console.log('Safety timeout: Forcing reset');
-                        setCountdown(0);
-                        showSuccessMessage();
-
-                        // Restart buffering
-                        setTimeout(async () => {
-                            try {
-                                await CameraModule.startBuffering();
-                                setIsReady(true);
-                            } catch (e) {
-                                console.error('Error restarting buffer:', e);
-                                // Try to reinitialize
-                                initializeCamera();
-                            }
-                        }, 500);
-
-                        return false;
+            setTimeout(() => {
+                if (captureInProgress.current) {
+                    console.log('Safety timeout: Forcing reset');
+                    if (countdownInterval.current) {
+                        clearInterval(countdownInterval.current);
+                        countdownInterval.current = null;
                     }
-                    return currentCapturing;
-                });
+                    setIsCapturing(false);
+                    setCountdown(0);
+                    captureInProgress.current = false;
+                    progressAnim.setValue(0);
+                    
+                    // Try to restart buffering
+                    setTimeout(async () => {
+                        try {
+                            await CameraModule.startBuffering();
+                            setIsReady(true);
+                            screenOpenTime.current = Date.now();
+                        } catch (e) {
+                            console.error('Error in safety timeout restart:', e);
+                        }
+                    }, 500);
+                }
             }, safetyTimeout);
 
         } catch (error) {
+            console.error('Capture error:', error);
+            captureInProgress.current = false;
             setIsCapturing(false);
             setIsReady(true);
+            setErrorMessage(error.message);
             Alert.alert('Error', 'Failed to capture: ' + error.message);
+            
+            if (countdownInterval.current) {
+                clearInterval(countdownInterval.current);
+                countdownInterval.current = null;
+            }
         }
     };
 
@@ -354,15 +430,22 @@ const CameraScreen = ({ username, clipDuration, onSettings, onLogout, onDuration
         try {
             if (countdownInterval.current) {
                 clearInterval(countdownInterval.current);
+                countdownInterval.current = null;
             }
             await CameraModule.stopCamera();
             setIsCapturing(false);
             setIsReady(false);
             setCountdown(0);
             setCameraState('idle');
+            captureInProgress.current = false;
+            screenOpenTime.current = null;
         } catch (error) {
             console.error('Stop error:', error);
         }
+    };
+
+    const toggleTelemetry = () => {
+        setShowTelemetry(!showTelemetry);
     };
 
     const preDuration = clipDuration / 2;
@@ -380,6 +463,9 @@ const CameraScreen = ({ username, clipDuration, onSettings, onLogout, onDuration
                     <Text style={styles.permissionText}>
                         RORK needs access to your camera and microphone to capture moments.
                     </Text>
+                    {errorMessage ? (
+                        <Text style={styles.errorText}>{errorMessage}</Text>
+                    ) : null}
                     <TouchableOpacity
                         style={styles.permissionButton}
                         onPress={initializeCamera}
@@ -402,14 +488,28 @@ const CameraScreen = ({ username, clipDuration, onSettings, onLogout, onDuration
                 style={styles.camera}
                 autoStart={false}
                 clipDuration={clipDuration}
+                onCameraReady={() => console.log('Camera preview ready')}
             />
+
+            {/* Error Overlay */}
+            {errorMessage && !isReady ? (
+                <View style={styles.errorOverlay}>
+                    <Text style={styles.errorOverlayText}>⚠️</Text>
+                    <Text style={styles.errorOverlayMessage}>{errorMessage}</Text>
+                    <TouchableOpacity
+                        style={styles.errorRetryButton}
+                        onPress={initializeCamera}
+                    >
+                        <Text style={styles.errorRetryButtonText}>Retry</Text>
+                    </TouchableOpacity>
+                </View>
+            ) : null}
 
             {/* Vignette Overlay */}
             <View style={styles.vignette} pointerEvents="none" />
 
             {/* Top Bar */}
             <View style={styles.topBar}>
-                {/* User Badge */}
                 <TouchableOpacity style={styles.userBadge} onPress={onLogout} activeOpacity={0.8}>
                     <View style={styles.userAvatar}>
                         <Text style={styles.userAvatarText}>{username?.charAt(0)?.toUpperCase()}</Text>
@@ -417,7 +517,6 @@ const CameraScreen = ({ username, clipDuration, onSettings, onLogout, onDuration
                     <Text style={styles.userName}>{username}</Text>
                 </TouchableOpacity>
 
-                {/* State Indicator */}
                 <View style={[styles.stateContainer, isReady && styles.stateContainerReady]}>
                     <View style={[
                         styles.stateDot,
@@ -429,7 +528,6 @@ const CameraScreen = ({ username, clipDuration, onSettings, onLogout, onDuration
                     </Text>
                 </View>
 
-                {/* Settings */}
                 <TouchableOpacity style={styles.settingsButton} onPress={onSettings} activeOpacity={0.8}>
                     <Text style={styles.settingsIcon}>⋮</Text>
                 </TouchableOpacity>
@@ -498,20 +596,17 @@ const CameraScreen = ({ username, clipDuration, onSettings, onLogout, onDuration
 
             {/* Bottom Controls */}
             <View style={styles.bottomBar}>
-                {/* Stats Toggle */}
                 <TouchableOpacity
                     style={[styles.sideButton, showTelemetry && styles.sideButtonActive]}
-                    onPress={() => setShowTelemetry(!showTelemetry)}
+                    onPress={toggleTelemetry}
                     activeOpacity={0.8}
                 >
                     <Text style={styles.sideButtonIcon}>☰</Text>
                     <Text style={styles.sideButtonLabel}>Stats</Text>
                 </TouchableOpacity>
 
-                {/* Main Capture Button */}
                 <View style={styles.mainControlContainer}>
                     <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
-                        {/* Pulse Ring when ready */}
                         {isReady && !isCapturing && (
                             <Animated.View
                                 style={[
@@ -521,7 +616,6 @@ const CameraScreen = ({ username, clipDuration, onSettings, onLogout, onDuration
                             />
                         )}
 
-                        {/* Progress Ring when capturing */}
                         {isCapturing && (
                             <View style={styles.progressRingContainer}>
                                 <Animated.View
@@ -565,7 +659,6 @@ const CameraScreen = ({ username, clipDuration, onSettings, onLogout, onDuration
                     </Animated.View>
                 </View>
 
-                {/* Stop Button */}
                 <TouchableOpacity
                     style={styles.sideButton}
                     onPress={handleStop}
@@ -627,6 +720,35 @@ const styles = StyleSheet.create({
         borderWidth: 40,
         borderColor: 'rgba(0,0,0,0.25)',
     },
+    errorOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(0, 0, 0, 0.9)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 40,
+        zIndex: 100,
+    },
+    errorOverlayText: {
+        fontSize: 64,
+        marginBottom: 20,
+    },
+    errorOverlayMessage: {
+        fontSize: 16,
+        color: COLORS.error,
+        textAlign: 'center',
+        marginBottom: 30,
+    },
+    errorRetryButton: {
+        backgroundColor: COLORS.primary,
+        paddingHorizontal: 30,
+        paddingVertical: 15,
+        borderRadius: 12,
+    },
+    errorRetryButtonText: {
+        color: '#000',
+        fontSize: 16,
+        fontWeight: '700',
+    },
     permissionContainer: {
         flex: 1,
         justifyContent: 'center',
@@ -658,6 +780,12 @@ const styles = StyleSheet.create({
         textAlign: 'center',
         marginBottom: 36,
         lineHeight: 24,
+    },
+    errorText: {
+        fontSize: 14,
+        color: COLORS.error,
+        textAlign: 'center',
+        marginBottom: 20,
     },
     permissionButton: {
         backgroundColor: COLORS.primary,

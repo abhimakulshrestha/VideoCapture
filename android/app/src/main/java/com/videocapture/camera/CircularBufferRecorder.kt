@@ -26,7 +26,7 @@ class CircularBufferRecorder(private val context: Context) {
 
     companion object {
         private const val TAG = "CircularBufferRecorder"
-        private const val SEGMENT_DURATION_MS = 500L
+        private const val SEGMENT_DURATION_MS = 2000L
         private const val DEFAULT_BUFFER_SECONDS = 5
         private const val TARGET_RESOLUTION_WIDTH = 1280
         private const val TARGET_RESOLUTION_HEIGHT = 720
@@ -233,13 +233,13 @@ class CircularBufferRecorder(private val context: Context) {
         
         val outputOptions = FileOutputOptions.Builder(segmentFile).build()
         
-        // Create a completion deferred
+        // Create completion deferreds
         val recordingComplete = CompletableDeferred<Boolean>()
+        val startEventReceived = CompletableDeferred<Unit>()
         
         try {
             withContext(Dispatchers.Main) {
-                if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) 
-                    == PackageManager.PERMISSION_GRANTED) {
+                if (checkPermissions()) {
                     
                     currentRecording = videoCapture.output
                         .prepareRecording(context, outputOptions)
@@ -248,6 +248,7 @@ class CircularBufferRecorder(private val context: Context) {
                             when (event) {
                                 is VideoRecordEvent.Start -> {
                                     Log.v(TAG, "Segment recording started: ${segmentFile.name}")
+                                    startEventReceived.complete(Unit)
                                 }
                                 is VideoRecordEvent.Finalize -> {
                                     if (event.hasError()) {
@@ -260,10 +261,22 @@ class CircularBufferRecorder(private val context: Context) {
                                 }
                             }
                         }
+                } else {
+                    recordingComplete.complete(false)
                 }
             }
             
-            // Wait for segment duration
+            // Wait for recording to actually start (up to 2s)
+            try {
+                withTimeout(2000L) {
+                    startEventReceived.await()
+                }
+            } catch (e: TimeoutCancellationException) {
+                Log.e(TAG, "Timeout waiting for recording start")
+                throw e
+            }
+            
+            // Record for the segment duration
             delay(SEGMENT_DURATION_MS)
             
             // Stop recording
@@ -279,6 +292,10 @@ class CircularBufferRecorder(private val context: Context) {
         } catch (e: Exception) {
             Log.e(TAG, "Error recording segment", e)
             recordingComplete.complete(false)
+            // Cleanup on error
+            withContext(Dispatchers.Main) {
+                currentRecording?.stop()
+            }
         }
     }
 

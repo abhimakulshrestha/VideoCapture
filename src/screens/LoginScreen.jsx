@@ -11,12 +11,12 @@ import {
     Animated,
     Dimensions,
     StatusBar,
+    ScrollView,
 } from 'react-native';
 import CameraModule from '../services/CameraModule';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-// New vibrant teal color palette
 const COLORS = {
     primary: '#00D9FF',
     primaryLight: '#5CE1FF',
@@ -84,8 +84,15 @@ const LoginScreen = ({ onLoginSuccess }) => {
 
     const checkRegistration = async () => {
         try {
+            if (!CameraModule.isAvailable()) {
+                setError('Camera module not available. Please restart the app.');
+                setLoading(false);
+                return;
+            }
+
             const registered = await CameraModule.isUserRegistered();
             setIsRegistered(registered);
+            console.log('User registered:', registered);
         } catch (err) {
             console.error('Error checking registration:', err);
             setError('Failed to check registration status');
@@ -111,12 +118,23 @@ const LoginScreen = ({ onLoginSuccess }) => {
     };
 
     const handleSubmit = async () => {
-        if (!username.trim()) {
+        const trimmedUsername = username.trim();
+        const trimmedPassword = password.trim();
+
+        if (!trimmedUsername) {
             setError('Please enter a username');
             return;
         }
-        if (!password.trim()) {
+        if (trimmedUsername.length < 3) {
+            setError('Username must be at least 3 characters');
+            return;
+        }
+        if (!trimmedPassword) {
             setError('Please enter a password');
+            return;
+        }
+        if (trimmedPassword.length < 4) {
+            setError('Password must be at least 4 characters');
             return;
         }
 
@@ -126,18 +144,37 @@ const LoginScreen = ({ onLoginSuccess }) => {
 
         try {
             if (isRegistered) {
-                const result = await CameraModule.login(username, password);
-                onLoginSuccess(result.username);
+                console.log('Attempting login...');
+                const result = await CameraModule.login(trimmedUsername, trimmedPassword);
+                console.log('Login result:', result);
+                if (result.success) {
+                    onLoginSuccess(result.username);
+                } else {
+                    setError(result.message || 'Login failed');
+                }
             } else {
-                const result = await CameraModule.register(username, password);
-                onLoginSuccess(result.username);
+                console.log('Attempting registration...');
+                const result = await CameraModule.register(trimmedUsername, trimmedPassword);
+                console.log('Registration result:', result);
+                if (result.success) {
+                    onLoginSuccess(result.username);
+                } else {
+                    setError(result.message || 'Registration failed');
+                }
             }
         } catch (err) {
             console.error('Auth error:', err);
-            setError(err.message || 'Authentication failed');
+            setError(err.message || 'Authentication failed. Please try again.');
         } finally {
             setSubmitting(false);
         }
+    };
+
+    const handleSwitchMode = () => {
+        setIsRegistered(!isRegistered);
+        setError('');
+        setUsername('');
+        setPassword('');
     };
 
     if (loading) {
@@ -146,7 +183,13 @@ const LoginScreen = ({ onLoginSuccess }) => {
                 <StatusBar barStyle="light-content" backgroundColor={COLORS.background} />
                 <View style={styles.loadingContainer}>
                     <Animated.View style={[styles.logoCircle, { transform: [{ scale: logoScale }] }]}>
-                        <Text style={styles.logoText}>R</Text>
+                        <View style={styles.logoIconBody}>
+                            <View style={styles.logoIconTop} />
+                            <View style={styles.logoIconLensOuter}>
+                                <View style={styles.logoIconLensInner} />
+                            </View>
+                            <View style={styles.logoIconFlash} />
+                        </View>
                     </Animated.View>
                     <ActivityIndicator size="large" color={COLORS.primary} style={{ marginTop: 24 }} />
                     <Text style={styles.loadingText}>Initializing...</Text>
@@ -159,6 +202,7 @@ const LoginScreen = ({ onLoginSuccess }) => {
         <KeyboardAvoidingView
             style={styles.container}
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
         >
             <StatusBar barStyle="light-content" backgroundColor={COLORS.background} />
 
@@ -166,146 +210,156 @@ const LoginScreen = ({ onLoginSuccess }) => {
             <View style={styles.backgroundOrb1} />
             <View style={styles.backgroundOrb2} />
 
-            <Animated.View
-                style={[
-                    styles.content,
-                    {
-                        opacity: fadeAnim,
-                        transform: [{ translateY: slideAnim }],
-                    },
-                ]}
+            <ScrollView
+                contentContainerStyle={styles.scrollContent}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
             >
-                {/* Logo */}
-                <View style={styles.header}>
-                    <Animated.View
-                        style={[
-                            styles.logoContainer,
-                            { transform: [{ scale: logoScale }] }
-                        ]}
-                    >
-                        <View style={styles.logoGlow} />
-                        <View style={styles.logoCircle}>
-                            <View style={styles.logoIconBody}>
-                                <View style={styles.logoIconTop} />
-                                <View style={styles.logoIconLensOuter}>
-                                    <View style={styles.logoIconLensInner} />
-                                </View>
-                                <View style={styles.logoIconFlash} />
-                            </View>
-                        </View>
-                    </Animated.View>
-                    <Text style={styles.title}>SNAP</Text>
-                    <Text style={styles.subtitle}>Capture moments in time</Text>
-                </View>
-
-                {/* Form Card */}
-                <View style={styles.formCard}>
-                    <View style={styles.formHeader}>
-                        <Text style={styles.formTitle}>
-                            {isRegistered ? 'Welcome Back' : 'Get Started'}
-                        </Text>
-                        <Text style={styles.formSubtitle}>
-                            {isRegistered ? 'Sign in to continue' : 'Create your account'}
-                        </Text>
-                    </View>
-
-                    {/* Username Input */}
-                    <View style={styles.inputWrapper}>
-                        <Text style={styles.inputLabel}>Username</Text>
-                        <View style={[
-                            styles.inputContainer,
-                            focusedInput === 'username' && styles.inputContainerFocused,
-                        ]}>
-                            <Text style={styles.inputIcon}>👤</Text>
-                            <TextInput
-                                style={styles.input}
-                                placeholder="Enter your username"
-                                placeholderTextColor={COLORS.textMuted}
-                                value={username}
-                                onChangeText={setUsername}
-                                onFocus={() => setFocusedInput('username')}
-                                onBlur={() => setFocusedInput(null)}
-                                autoCapitalize="none"
-                                autoCorrect={false}
-                            />
-                        </View>
-                    </View>
-
-                    {/* Password Input */}
-                    <View style={styles.inputWrapper}>
-                        <Text style={styles.inputLabel}>Password</Text>
-                        <View style={[
-                            styles.inputContainer,
-                            focusedInput === 'password' && styles.inputContainerFocused,
-                        ]}>
-                            <Text style={styles.inputIcon}>🔒</Text>
-                            <TextInput
-                                style={styles.input}
-                                placeholder="Enter your password"
-                                placeholderTextColor={COLORS.textMuted}
-                                value={password}
-                                onChangeText={setPassword}
-                                onFocus={() => setFocusedInput('password')}
-                                onBlur={() => setFocusedInput(null)}
-                                secureTextEntry
-                                autoCapitalize="none"
-                            />
-                        </View>
-                    </View>
-
-                    {/* Error Message */}
-                    {error ? (
-                        <View style={styles.errorContainer}>
-                            <Text style={styles.errorIcon}>⚠️</Text>
-                            <Text style={styles.errorText}>{error}</Text>
-                        </View>
-                    ) : null}
-
-                    {/* Submit Button */}
-                    <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
-                        <TouchableOpacity
-                            style={[styles.submitButton, submitting && styles.submitButtonDisabled]}
-                            onPress={handleSubmit}
-                            disabled={submitting}
-                            activeOpacity={0.9}
+                <Animated.View
+                    style={[
+                        styles.content,
+                        {
+                            opacity: fadeAnim,
+                            transform: [{ translateY: slideAnim }],
+                        },
+                    ]}
+                >
+                    {/* Logo */}
+                    <View style={styles.header}>
+                        <Animated.View
+                            style={[
+                                styles.logoContainer,
+                                { transform: [{ scale: logoScale }] }
+                            ]}
                         >
-                            <View style={styles.submitButtonGradient}>
-                                {submitting ? (
-                                    <ActivityIndicator color="#000" size="small" />
-                                ) : (
-                                    <>
-                                        <Text style={styles.submitButtonText}>
-                                            {isRegistered ? 'Sign In' : 'Create Account'}
-                                        </Text>
-                                        <Text style={styles.submitButtonIcon}>→</Text>
-                                    </>
-                                )}
+                            <View style={styles.logoGlow} />
+                            <View style={styles.logoCircle}>
+                                <View style={styles.logoIconBody}>
+                                    <View style={styles.logoIconTop} />
+                                    <View style={styles.logoIconLensOuter}>
+                                        <View style={styles.logoIconLensInner} />
+                                    </View>
+                                    <View style={styles.logoIconFlash} />
+                                </View>
                             </View>
-                        </TouchableOpacity>
-                    </Animated.View>
-
-                    {/* Switch Mode */}
-                    <TouchableOpacity
-                        style={styles.switchButton}
-                        onPress={() => setIsRegistered(!isRegistered)}
-                    >
-                        <Text style={styles.switchText}>
-                            {isRegistered ? "Don't have an account? " : 'Already have an account? '}
-                            <Text style={styles.switchLink}>
-                                {isRegistered ? 'Register' : 'Sign In'}
-                            </Text>
-                        </Text>
-                    </TouchableOpacity>
-                </View>
-
-                {/* Footer */}
-                <View style={styles.footer}>
-                    <View style={styles.securityBadge}>
-                        <Text style={styles.securityIcon}>🛡️</Text>
-                        <Text style={styles.securityText}>Secured with Android Keystore</Text>
+                        </Animated.View>
+                        <Text style={styles.title}>RORK</Text>
+                        <Text style={styles.subtitle}>Capture moments in time</Text>
                     </View>
-                </View>
-            </Animated.View>
+
+                    {/* Form Card */}
+                    <View style={styles.formCard}>
+                        <View style={styles.formHeader}>
+                            <Text style={styles.formTitle}>
+                                {isRegistered ? 'Welcome Back' : 'Get Started'}
+                            </Text>
+                            <Text style={styles.formSubtitle}>
+                                {isRegistered ? 'Sign in to continue' : 'Create your account'}
+                            </Text>
+                        </View>
+
+                        {/* Username Input */}
+                        <View style={styles.inputWrapper}>
+                            <Text style={styles.inputLabel}>Username</Text>
+                            <View style={[
+                                styles.inputContainer,
+                                focusedInput === 'username' && styles.inputContainerFocused,
+                            ]}>
+                                <Text style={styles.inputIcon}>👤</Text>
+                                <TextInput
+                                    style={styles.input}
+                                    placeholder="Enter your username"
+                                    placeholderTextColor={COLORS.textMuted}
+                                    value={username}
+                                    onChangeText={setUsername}
+                                    onFocus={() => setFocusedInput('username')}
+                                    onBlur={() => setFocusedInput(null)}
+                                    autoCapitalize="none"
+                                    autoCorrect={false}
+                                    editable={!submitting}
+                                />
+                            </View>
+                        </View>
+
+                        {/* Password Input */}
+                        <View style={styles.inputWrapper}>
+                            <Text style={styles.inputLabel}>Password</Text>
+                            <View style={[
+                                styles.inputContainer,
+                                focusedInput === 'password' && styles.inputContainerFocused,
+                            ]}>
+                                <Text style={styles.inputIcon}>🔒</Text>
+                                <TextInput
+                                    style={styles.input}
+                                    placeholder="Enter your password"
+                                    placeholderTextColor={COLORS.textMuted}
+                                    value={password}
+                                    onChangeText={setPassword}
+                                    onFocus={() => setFocusedInput('password')}
+                                    onBlur={() => setFocusedInput(null)}
+                                    secureTextEntry
+                                    autoCapitalize="none"
+                                    editable={!submitting}
+                                    onSubmitEditing={handleSubmit}
+                                />
+                            </View>
+                        </View>
+
+                        {/* Error Message */}
+                        {error ? (
+                            <View style={styles.errorContainer}>
+                                <Text style={styles.errorIcon}>⚠️</Text>
+                                <Text style={styles.errorText}>{error}</Text>
+                            </View>
+                        ) : null}
+
+                        {/* Submit Button */}
+                        <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
+                            <TouchableOpacity
+                                style={[styles.submitButton, submitting && styles.submitButtonDisabled]}
+                                onPress={handleSubmit}
+                                disabled={submitting}
+                                activeOpacity={0.9}
+                            >
+                                <View style={styles.submitButtonGradient}>
+                                    {submitting ? (
+                                        <ActivityIndicator color="#000" size="small" />
+                                    ) : (
+                                        <>
+                                            <Text style={styles.submitButtonText}>
+                                                {isRegistered ? 'Sign In' : 'Create Account'}
+                                            </Text>
+                                            <Text style={styles.submitButtonIcon}>→</Text>
+                                        </>
+                                    )}
+                                </View>
+                            </TouchableOpacity>
+                        </Animated.View>
+
+                        {/* Switch Mode */}
+                        <TouchableOpacity
+                            style={styles.switchButton}
+                            onPress={handleSwitchMode}
+                            disabled={submitting}
+                        >
+                            <Text style={styles.switchText}>
+                                {isRegistered ? "Don't have an account? " : 'Already have an account? '}
+                                <Text style={styles.switchLink}>
+                                    {isRegistered ? 'Register' : 'Sign In'}
+                                </Text>
+                            </Text>
+                        </TouchableOpacity>
+                    </View>
+
+                    {/* Footer */}
+                    <View style={styles.footer}>
+                        <View style={styles.securityBadge}>
+                            <Text style={styles.securityIcon}>🛡️</Text>
+                            <Text style={styles.securityText}>Secured with Android Keystore</Text>
+                        </View>
+                    </View>
+                </Animated.View>
+            </ScrollView>
         </KeyboardAvoidingView>
     );
 };
@@ -314,6 +368,11 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
         backgroundColor: COLORS.background,
+    },
+    scrollContent: {
+        flexGrow: 1,
+        justifyContent: 'center',
+        minHeight: SCREEN_HEIGHT,
     },
     backgroundOrb1: {
         position: 'absolute',
@@ -349,6 +408,7 @@ const styles = StyleSheet.create({
         flex: 1,
         paddingHorizontal: 24,
         justifyContent: 'center',
+        paddingVertical: 40,
     },
     header: {
         alignItems: 'center',
@@ -525,16 +585,15 @@ const styles = StyleSheet.create({
     },
     submitButtonText: {
         color: '#000',
-        fontSize: 20,
-        fontWeight: '900',
+        fontSize: 18,
+        fontWeight: '700',
         letterSpacing: 0.5,
     },
     submitButtonIcon: {
         color: '#000',
-        fontSize: 32,
-        marginLeft: -2,
+        fontSize: 24,
+        marginLeft: 8,
         fontWeight: '300',
-        marginTop: -7,
     },
     switchButton: {
         marginTop: 24,

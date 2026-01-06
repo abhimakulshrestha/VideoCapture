@@ -12,7 +12,6 @@ import {
 } from 'react-native';
 import CameraModule from '../services/CameraModule';
 
-// New vibrant teal color palette
 const COLORS = {
     primary: '#00D9FF',
     primaryLight: '#5CE1FF',
@@ -32,13 +31,14 @@ const COLORS = {
 };
 
 /**
- * SettingsScreen - Beautiful and intuitive configuration
+ * SettingsScreen - Beautiful and intuitive configuration (ALL BUTTONS FUNCTIONAL)
  */
 const SettingsScreen = ({ currentDuration, onDurationChange, onClose, username }) => {
     const [selectedDuration, setSelectedDuration] = useState(currentDuration);
     const [buttonScale] = useState(new Animated.Value(1));
+    const [saving, setSaving] = useState(false);
+    const [exporting, setExporting] = useState(false);
 
-    // Duration options - total time split equally before/after
     const durationOptions = [
         { value: 6, pre: 3, post: 3, icon: '⚡', label: 'Quick' },
         { value: 10, pre: 5, post: 5, icon: '🎯', label: 'Standard' },
@@ -48,6 +48,7 @@ const SettingsScreen = ({ currentDuration, onDurationChange, onClose, username }
 
     const handleDurationSelect = (value) => {
         setSelectedDuration(value);
+        animateButton();
     };
 
     const animateButton = () => {
@@ -67,26 +68,56 @@ const SettingsScreen = ({ currentDuration, onDurationChange, onClose, username }
     };
 
     const handleSave = async () => {
-        animateButton();
-        try {
-            await CameraModule.setClipDuration(selectedDuration);
-            onDurationChange(selectedDuration);
+        if (selectedDuration === currentDuration) {
+            // No changes, just close
             onClose();
+            return;
+        }
+
+        animateButton();
+        setSaving(true);
+        
+        try {
+            console.log('Saving new duration:', selectedDuration);
+            await CameraModule.setClipDuration(selectedDuration);
+            
+            if (onDurationChange) {
+                onDurationChange(selectedDuration);
+            }
+            
+            Alert.alert(
+                'Settings Saved', 
+                `Clip duration set to ${selectedDuration} seconds`,
+                [{ text: 'OK', onPress: onClose }]
+            );
         } catch (error) {
+            console.error('Save error:', error);
             Alert.alert('Error', 'Failed to update duration: ' + error.message);
+        } finally {
+            setSaving(false);
         }
     };
 
     const handleExportTelemetry = async () => {
+        setExporting(true);
         try {
+            console.log('Exporting telemetry...');
             const filePath = await CameraModule.exportTelemetry();
-            Alert.alert('Export Successful', `Telemetry log saved to:\n${filePath}`);
+            Alert.alert(
+                'Export Successful', 
+                `Telemetry log saved to:\n${filePath}`,
+                [{ text: 'OK' }]
+            );
         } catch (error) {
-            Alert.alert('Export Failed', error.message);
+            console.error('Export error:', error);
+            Alert.alert('Export Failed', error.message || 'Could not export telemetry');
+        } finally {
+            setExporting(false);
         }
     };
 
     const selectedOption = durationOptions.find(o => o.value === selectedDuration);
+    const hasChanges = selectedDuration !== currentDuration;
 
     return (
         <View style={styles.container}>
@@ -98,7 +129,12 @@ const SettingsScreen = ({ currentDuration, onDurationChange, onClose, username }
 
             {/* Header */}
             <View style={styles.header}>
-                <TouchableOpacity style={styles.backButton} onPress={onClose} activeOpacity={0.8}>
+                <TouchableOpacity 
+                    style={styles.backButton} 
+                    onPress={onClose} 
+                    activeOpacity={0.8}
+                    disabled={saving}
+                >
                     <Text style={styles.backIcon}>←</Text>
                 </TouchableOpacity>
                 <Text style={styles.headerTitle}>Settings</Text>
@@ -114,10 +150,12 @@ const SettingsScreen = ({ currentDuration, onDurationChange, onClose, username }
                 <View style={styles.section}>
                     <View style={styles.profileCard}>
                         <View style={styles.profileAvatar}>
-                            <Text style={styles.profileAvatarText}>{username?.charAt(0)?.toUpperCase()}</Text>
+                            <Text style={styles.profileAvatarText}>
+                                {username?.charAt(0)?.toUpperCase() || 'U'}
+                            </Text>
                         </View>
                         <View style={styles.profileInfo}>
-                            <Text style={styles.profileName}>{username}</Text>
+                            <Text style={styles.profileName}>{username || 'User'}</Text>
                             <Text style={styles.profileLabel}>Currently logged in</Text>
                         </View>
                         <View style={styles.profileBadge}>
@@ -146,6 +184,7 @@ const SettingsScreen = ({ currentDuration, onDurationChange, onClose, username }
                                 ]}
                                 onPress={() => handleDurationSelect(option.value)}
                                 activeOpacity={0.8}
+                                disabled={saving}
                             >
                                 <Text style={styles.durationCardIcon}>{option.icon}</Text>
                                 <Text style={[
@@ -188,6 +227,16 @@ const SettingsScreen = ({ currentDuration, onDurationChange, onClose, username }
                             </View>
                         </View>
                     )}
+
+                    {/* Change Indicator */}
+                    {hasChanges && (
+                        <View style={styles.changeIndicator}>
+                            <Text style={styles.changeIndicatorIcon}>ℹ️</Text>
+                            <Text style={styles.changeIndicatorText}>
+                                Tap "Save Changes" to apply new duration
+                            </Text>
+                        </View>
+                    )}
                 </View>
 
                 {/* How It Works Section */}
@@ -207,7 +256,9 @@ const SettingsScreen = ({ currentDuration, onDurationChange, onClose, username }
                             </View>
                             <View style={styles.infoStepContent}>
                                 <Text style={styles.infoStepTitle}>Camera Always Recording</Text>
-                                <Text style={styles.infoStepDesc}>Buffer keeps last {selectedDuration / 2} seconds</Text>
+                                <Text style={styles.infoStepDesc}>
+                                    Buffer keeps last {selectedDuration / 2} seconds in memory
+                                </Text>
                             </View>
                         </View>
 
@@ -231,7 +282,9 @@ const SettingsScreen = ({ currentDuration, onDurationChange, onClose, username }
                             </View>
                             <View style={styles.infoStepContent}>
                                 <Text style={styles.infoStepTitle}>Auto-Records After</Text>
-                                <Text style={styles.infoStepDesc}>Captures next {selectedDuration / 2} seconds</Text>
+                                <Text style={styles.infoStepDesc}>
+                                    Captures next {selectedDuration / 2} seconds
+                                </Text>
                             </View>
                         </View>
 
@@ -243,7 +296,9 @@ const SettingsScreen = ({ currentDuration, onDurationChange, onClose, username }
                             </View>
                             <View style={styles.infoStepContent}>
                                 <Text style={styles.infoStepTitle}>Auto-Saves to Gallery</Text>
-                                <Text style={styles.infoStepDesc}>Combined {selectedDuration}s clip ready</Text>
+                                <Text style={styles.infoStepDesc}>
+                                    Combined {selectedDuration}s clip ready
+                                </Text>
                             </View>
                         </View>
                     </View>
@@ -260,13 +315,16 @@ const SettingsScreen = ({ currentDuration, onDurationChange, onClose, username }
                     </View>
 
                     <TouchableOpacity
-                        style={styles.exportButton}
+                        style={[styles.exportButton, exporting && styles.exportButtonDisabled]}
                         onPress={handleExportTelemetry}
                         activeOpacity={0.8}
+                        disabled={exporting}
                     >
                         <Text style={styles.exportButtonIcon}>📥</Text>
-                        <Text style={styles.exportButtonText}>Export Telemetry Log</Text>
-                        <Text style={styles.exportButtonArrow}>→</Text>
+                        <Text style={styles.exportButtonText}>
+                            {exporting ? 'Exporting...' : 'Export Telemetry Log'}
+                        </Text>
+                        {!exporting && <Text style={styles.exportButtonArrow}>→</Text>}
                     </TouchableOpacity>
                 </View>
 
@@ -285,7 +343,8 @@ const SettingsScreen = ({ currentDuration, onDurationChange, onClose, username }
                             "Capture what just happened"
                         </Text>
                         <Text style={styles.aboutText}>
-                            RORK records continuously in the background. When something interesting happens, just tap - and you've captured both the moment and what led up to it.
+                            RORK records continuously in the background. When something interesting 
+                            happens, just tap - and you've captured both the moment and what led up to it.
                         </Text>
                         <View style={styles.techStack}>
                             <View style={styles.techItem}>
@@ -312,11 +371,18 @@ const SettingsScreen = ({ currentDuration, onDurationChange, onClose, username }
             <View style={styles.footer}>
                 <Animated.View style={{ transform: [{ scale: buttonScale }], flex: 1 }}>
                     <TouchableOpacity
-                        style={styles.saveButton}
+                        style={[
+                            styles.saveButton,
+                            saving && styles.saveButtonDisabled,
+                            !hasChanges && styles.saveButtonNoChanges,
+                        ]}
                         onPress={handleSave}
                         activeOpacity={0.9}
+                        disabled={saving}
                     >
-                        <Text style={styles.saveButtonText}>Save Changes</Text>
+                        <Text style={styles.saveButtonText}>
+                            {saving ? 'Saving...' : hasChanges ? 'Save Changes' : 'Close'}
+                        </Text>
                     </TouchableOpacity>
                 </Animated.View>
             </View>
@@ -369,8 +435,8 @@ const styles = StyleSheet.create({
     },
     backIcon: {
         color: COLORS.text,
-        fontSize: 40,
-        marginTop: -19,
+        fontSize: 24,
+        fontWeight: '300',
     },
     headerTitle: {
         fontSize: 18,
@@ -565,6 +631,26 @@ const styles = StyleSheet.create({
         marginHorizontal: 6,
         letterSpacing: 1,
     },
+    changeIndicator: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(0, 217, 255, 0.15)',
+        borderRadius: 12,
+        padding: 12,
+        marginTop: 12,
+        borderWidth: 1,
+        borderColor: 'rgba(0, 217, 255, 0.3)',
+    },
+    changeIndicatorIcon: {
+        fontSize: 16,
+        marginRight: 10,
+    },
+    changeIndicatorText: {
+        flex: 1,
+        fontSize: 13,
+        color: COLORS.primary,
+        fontWeight: '600',
+    },
     infoCard: {
         backgroundColor: COLORS.surface,
         borderRadius: 20,
@@ -618,6 +704,9 @@ const styles = StyleSheet.create({
         borderRadius: 16,
         borderWidth: 1,
         borderColor: COLORS.border,
+    },
+    exportButtonDisabled: {
+        opacity: 0.6,
     },
     exportButtonIcon: {
         fontSize: 20,
@@ -692,6 +781,14 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.4,
         shadowRadius: 12,
         elevation: 8,
+    },
+    saveButtonDisabled: {
+        opacity: 0.6,
+    },
+    saveButtonNoChanges: {
+        backgroundColor: COLORS.surface,
+        shadowOpacity: 0,
+        elevation: 0,
     },
     saveButtonText: {
         color: '#000',
